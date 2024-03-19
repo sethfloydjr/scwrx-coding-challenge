@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: setheryops-flaskapp-deploy
+  labels:
+    app: setheryops-flaskapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: setheryops-flaskapp
+  template:
+    metadata:
+      labels:
+        app: setheryops-flaskapp
+    spec:
+      containers:
+      - name: setheryops-flaskapp
+        image: sethfloydjr/setheryops-flaskapp:latest
+        ports:
+        - containerPort: 5000

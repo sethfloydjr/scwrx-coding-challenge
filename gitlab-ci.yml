@@ -1,0 +1,141 @@
+image:
+  name: docker:stable
+  entrypoint:
+    - '/usr/bin/env'
+    - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+services:
+- docker:dind
+
+# Default output file for Terraform plan
+variables:
+  PLAN: plan.tfplan
+  DOCKER_HOST: tcp://docker:2375/
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  
+cache:
+  paths:
+    - terraform/.terraform
+
+  
+##############################################################################
+
+.tf_setup: &tf_image
+  image:
+    name: hashicorp/terraform:$TERRAFORM_VERSION
+    entrypoint:
+      - '/usr/bin/env'
+      - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+##############################################################################
+
+#.eks_auth: &eks_auth
+#  image:
+#    name: amazonlinux:2
+#    entrypoint:
+#      - '/usr/bin/env'
+#      - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+
+##############################################################################
+
+stages:
+    - Terraform-Validate
+    - Terraform-Plan
+    - Terraform-Apply
+    - DockerImage
+
+
+##############################################################################
+
+
+Terraform-Validate:
+    <<: *tf_image
+    stage: Terraform-Validate
+    script:
+        - export AWS_ACCESS_KEY_ID=$TF_VAR_AWS_ACCESS_KEY_ID
+        - export AWS_SECRET_ACCESS_KEY=$TF_VAR_AWS_SECRET_ACCESS_KEY
+        - terraform --version
+        - cd terraform
+        - terraform init -backend=true -get=true -input=false
+        - terraform validate
+
+Terraform-Plan:
+    <<: *tf_image
+    stage: Terraform-Plan
+    script:
+        - export AWS_ACCESS_KEY_ID=$TF_VAR_AWS_ACCESS_KEY_ID
+        - export AWS_SECRET_ACCESS_KEY=$TF_VAR_AWS_SECRET_ACCESS_KEY
+        - terraform --version
+        - cd terraform
+        - terraform init -backend=true -get=true -input=false
+        - terraform plan -out=$PLAN
+    artifacts:
+        name: plan
+        paths:
+            - terraform/.archive_files
+            - terraform/$PLAN
+
+# Separate apply job for manual launching Terraform as it can be destructive action.
+Terraform-Apply:
+    <<: *tf_image
+    stage: Terraform-Apply
+    only:
+        refs:
+            - master
+    environment:
+        name: Setheryops
+    script:
+        - export AWS_ACCESS_KEY_ID=$TF_VAR_AWS_ACCESS_KEY_ID
+        - export AWS_SECRET_ACCESS_KEY=$TF_VAR_AWS_SECRET_ACCESS_KEY
+        - terraform --version
+        - cd terraform
+        - terraform init -backend=true -get=true -input=false
+        - terraform apply "$PLAN"
+    when: manual
+    
+
+##############################################################################
+
+
+Docker-Build-Tag-Push:
+    stage: DockerImage
+    only:
+        refs:
+            - master
+        changes:
+            - application/**/*
+    script:
+        - cd application/
+        - docker login -u $DOCKER_UNAME -p $DOCKER_PWORD
+        - dockerd &>/dev/null &
+        - docker build -t setheryops-flaskapp .
+        - docker tag setheryops-flaskapp:latest $DOCKER_UNAME/setheryops-flaskapp:latest
+        - docker tag setheryops-flaskapp:latest $DOCKER_UNAME/setheryops-flaskapp:$CI_COMMIT_SHORT_SHA
+        - docker push $DOCKER_UNAME/setheryops-flaskapp:latest
+        - docker push $DOCKER_UNAME/setheryops-flaskapp:$CI_COMMIT_SHORT_SHA
+
+
+##############################################################################
+
+#This step could be automated better to automate the deployment of a new app.py to the container that was created in the Doacker step above.
+
+#Kube-Deploy-Auth:
+#    <<: *eks_auth
+#    stage: Kube-Auth
+#    only:
+#        refs:
+#            - master
+#            - application/flaskapp/*
+#    script:
+#        - export AWS_ACCESS_KEY_ID=$TF_VAR_AWS_ACCESS_KEY_ID
+#        - export AWS_SECRET_ACCESS_KEY=$TF_VAR_AWS_SECRET_ACCESS_KEY
+#        - yum install -y aws-cli
+#        #Install Kubectl
+#        - chmod 755 scripts/kube-install.sh
+#        - ./scripts/kube-install.sh
+#        - aws eks --region us-east-1 update-kubeconfig --name setheryops_eks #Hard coded here but could be automated and pulled from Terraform outputs
+#        - kubectl apply -f application/kubernetes/flask_app.yaml
+#        - kubectl apply -f application/kubernetes/flask_app_loadbalancer.yaml
+#        - From here the steps to auto scale up the number of replicas in the deployment would be added, the name of the oldest pod would be culled and a kubectl delete pod XYZ would run, then the replicaset in the deployment would scale down to its original number.
+        
