@@ -13,6 +13,8 @@ Ultimately this project is not complete but to be fair I didn't have the time I 
 
 For the record I did get this all working but not to what I would consider "production ready".
 
+This project was originally written to run with GitLab's CI/CD but could easily be run with GitHub Actions as well.
+
 ---
 
 ## INSTRUCTIONS:
